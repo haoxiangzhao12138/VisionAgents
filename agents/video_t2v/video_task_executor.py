@@ -10,7 +10,15 @@ from dashscope import VideoSynthesis
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_text_artifact
-from a2a.types import TaskState, TaskStatusUpdateEvent, TaskStatus, TaskArtifactUpdateEvent
+from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
+
+from shared.config import (
+    DASHSCOPE_API_KEY,
+    DASHSCOPE_BASE_URL,
+    DEFAULT_SAVE_ARTIFACTS,
+    DEFAULT_VIDEO_DURATION,
+    DEFAULT_VIDEO_SIZE,
+)
 
 logger = logging.getLogger("video_task_executor")
 
@@ -152,20 +160,17 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
         if not params.get("prompt"): params["prompt"] = first_text
 
     params.setdefault("negative_prompt", "")
-    params.setdefault("size", os.getenv("DASHSCOPE_T2V_SIZE", "832*480"))
-    params.setdefault("duration", int(os.getenv("DASHSCOPE_T2V_DURATION", "6")))
+    params.setdefault("size", os.getenv("DASHSCOPE_T2V_SIZE", DEFAULT_VIDEO_SIZE))
+    params.setdefault("duration", int(os.getenv("DASHSCOPE_T2V_DURATION", str(DEFAULT_VIDEO_DURATION))))
     params.setdefault("prompt_extend", True)
     params.setdefault("watermark", False)
     params.setdefault("model", os.getenv("DASHSCOPE_T2V_MODEL", "wan2.5-t2v-preview"))
 
-    params.setdefault("save", True)
+    params.setdefault("save", DEFAULT_SAVE_ARTIFACTS)
     params.setdefault("save_dir", os.getenv("VIDEO_SAVE_DIR", "videos"))
     params.setdefault("overwrite", False)
 
-    dashscope.base_http_api_url = os.getenv(
-        "DASHSCOPE_BASE_URL",
-        "https://dashscope.aliyuncs.com/api/v1",  # 海外： https://dashscope-intl.aliyuncs.com/api/v1
-    )
+    dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", DASHSCOPE_BASE_URL)
     return params
 
 # -----------------------
@@ -175,7 +180,7 @@ class VideoGenAgent:
     """调用 DashScope 文生视频并（可选）下载保存。"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = api_key or DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY")
 
     def _blocking_call(self, call_kwargs: Dict[str, Any]):
         return VideoSynthesis.call(**call_kwargs)

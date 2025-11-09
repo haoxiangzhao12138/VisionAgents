@@ -1,7 +1,17 @@
 # planning/planning_agent_executor.py
 # -*- coding: utf-8 -*-
-import os, re, json, time, uuid, anyio, httpx
-from typing import Any, Dict, List, Optional
+"""Planning agent that orchestrates downstream task agents."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import uuid
+from typing import Any, Dict, Iterable, List, Optional
+
+import anyio
+import httpx
 from openai import AzureOpenAI
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -13,10 +23,14 @@ from holos_sdk import HolosA2AClientFactory, Plan, PlantTracer
 from a2a.client.client import ClientConfig
 from a2a.client.card_resolver import A2ACardResolver
 
-from shared.logger import setup_logging
 from shared.config import (
-    YUNSTORM_ENDPOINT, YUNSTORM_API_KEY, YUNSTORM_API_VERSION, YUNSTORM_MODEL,
+    ROUTER_PUBLIC_URL,
+    YUNSTORM_API_KEY,
+    YUNSTORM_API_VERSION,
+    YUNSTORM_ENDPOINT,
+    YUNSTORM_MODEL,
 )
+from shared.logger import setup_logging
 
 logger = setup_logging("planning_agent")
 
@@ -52,34 +66,56 @@ class YunstormLLM:
 
 def build_plan_tree(llm_plan: Dict[str, Any]) -> Plan:
     steps = llm_plan.get("steps") or []
+    if not isinstance(steps, list):
+        raise ValueError("Plan JSON must contain a list under 'steps'.")
+
+    if not steps:
+        root = Plan(goal="Prompt orchestration")
+        root.metadata = {"op": "noop", "params": {}}
+        return root
+
     id2plan: Dict[str, Plan] = {}
-    for s in steps:
-        sid = s.get("id") or uuid.uuid4().hex[:6]
-        op  = (s.get("op") or "").strip()
-        prm = s.get("params") or {}
-        goal = f"{op.upper()} | {prm.get('prompt') or prm.get('image_url') or prm.get('img_url') or ''}".strip()
-        p = Plan(goal=goal)
-        p.metadata = {"op": op, "params": prm}
-        id2plan[sid] = p
-    # 依赖
-    for s in steps:
-        sid = s.get("id")
-        after = s.get("after") or []
-        id2plan[sid].depend_plans = [id2plan[a] for a in after if a in id2plan]
-    # 根
-    referenced = {a for s in steps for a in (s.get("after") or [])}
-    roots = [id2plan[s.get("id")] for s in steps if s.get("id") not in referenced] or list(id2plan.values())[:1]
-    root = roots[0]
+    for raw in steps:
+        if not isinstance(raw, dict):
+            continue
+        sid = (raw.get("id") or uuid.uuid4().hex[:6]).strip()
+        op = (raw.get("op") or "").strip()
+        params = raw.get("params") or {}
+        prompt_preview = params.get("prompt") or params.get("image_url") or params.get("img_url") or ""
+        goal = f"{op.upper()} | {prompt_preview}".strip() or op or "task"
+
+        node = Plan(goal=goal)
+        node.metadata = {"op": op, "params": params}
+        id2plan[sid] = node
+
+    for raw in steps:
+        sid = raw.get("id") if isinstance(raw, dict) else None
+        if not sid or sid not in id2plan:
+            continue
+        dependencies = []
+        for dep in raw.get("after", []) if isinstance(raw, dict) else []:
+            if dep in id2plan:
+                dependencies.append(id2plan[dep])
+        if dependencies:
+            id2plan[sid].depend_plans = dependencies
+
+    referenced = {dep for raw in steps if isinstance(raw, dict) for dep in raw.get("after", [])}
+    roots = [id2plan[raw.get("id")] for raw in steps if isinstance(raw, dict) and raw.get("id") in id2plan and raw.get("id") not in referenced]
+    root = (roots or list(id2plan.values()))[0]
+
+    meta = dict(getattr(root, "metadata", {}) or {})
     if "notes" in llm_plan:
-        root.metadata = (root.metadata or {}) | {"notes": llm_plan["notes"]}
+        meta["notes"] = llm_plan["notes"]
+    root.metadata = meta
     return root
 
 class PlanningAgentExecutor(AgentExecutor):
     def __init__(self):
         self.http = httpx.AsyncClient()
         self.llm  = YunstormLLM()
-        self.ROUTER_AGENT_URL = os.getenv("ROUTER_URL", "http://localhost:10102/")
+        self.ROUTER_AGENT_URL = os.getenv("ROUTER_URL", ROUTER_PUBLIC_URL)
 
+    # ------------------------------------------------------------------ helpers
     def _planner_system_prompt(self) -> str:
         return (
             "You are a senior visual orchestration planner.\n"
@@ -93,6 +129,66 @@ class PlanningAgentExecutor(AgentExecutor):
             "6) Keep the user's language.\n"
         )
 
+    def _extract_user_text(self, context: RequestContext) -> str:
+        """Best-effort extraction of the user's textual instruction."""
+
+        def _iter_candidates() -> Iterable[Any]:
+            for path in [
+                ("message",),
+                ("params", "message"),
+                ("request", "message"),
+                ("input", "message"),
+                ("input_message",),
+            ]:
+                current: Any = context
+                ok = True
+                for key in path:
+                    if isinstance(current, dict):
+                        current = current.get(key)
+                    else:
+                        current = getattr(current, key, None)
+                    if current is None:
+                        ok = False
+                        break
+                if ok and current is not None:
+                    yield current
+
+        def _text_from_message(msg: Any) -> str:
+            if msg is None:
+                return ""
+            # Structured message objects from `a2a` expose `.parts` with `.root.text`.
+            parts = getattr(msg, "parts", None)
+            if isinstance(parts, list):
+                for part in parts:
+                    root = getattr(part, "root", None)
+                    text = getattr(root, "text", None)
+                    if isinstance(text, str) and text.strip():
+                        return text.strip()
+
+            if hasattr(msg, "model_dump"):
+                msg = msg.model_dump(exclude_none=True)
+
+            if isinstance(msg, dict):
+                for part in msg.get("parts", []):
+                    text = part.get("text") if isinstance(part, dict) else None
+                    if isinstance(text, str) and text.strip():
+                        return text.strip()
+                for key in ("text", "content"):
+                    text = msg.get(key)
+                    if isinstance(text, str) and text.strip():
+                        return text.strip()
+
+            if isinstance(msg, str) and msg.strip():
+                return msg.strip()
+
+            return ""
+
+        for candidate in _iter_candidates():
+            text = _text_from_message(candidate)
+            if text:
+                return text
+        return ""
+
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task = new_task(context.message); task.id = context.task_id
         await event_queue.enqueue_event(task)
@@ -102,14 +198,7 @@ class PlanningAgentExecutor(AgentExecutor):
         ))
 
         # 提取用户文本
-        user_text = ""
-        try:
-            for p in context.message.parts:  # type: ignore
-                if isinstance(p, dict) and p.get("kind")=="text" and (p.get("text") or "").strip():
-                    user_text = p["text"].strip(); break
-        except Exception:
-            pass
-        user_text = user_text or "生成一个可爱的视觉作品"
+        user_text = self._extract_user_text(context) or "生成一个可爱的视觉作品"
 
         # 调 LLM 生成 plan
         try:

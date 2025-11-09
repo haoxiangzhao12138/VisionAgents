@@ -11,12 +11,14 @@ from dashscope import MultiModalConversation
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_text_artifact
-from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent, TaskArtifactUpdateEvent
+from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
+
+from shared.config import DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, DEFAULT_SAVE_ARTIFACTS
 
 # ---------- Config ----------
 FIXED_DIR = os.getenv("FIXED_IMAGE_DIR", "/inspire/hdd/project/25jinqiu15/haoxiangzhao-P-253130075/agent/outputs")
 DEFAULT_EDIT_INSTRUCTION = os.getenv("FIXED_EDIT_INSTRUCTION", "合并几张图片")
-dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
+dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", DASHSCOPE_BASE_URL)
 
 logger = logging.getLogger("image_edit_executor")
 
@@ -104,7 +106,7 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
     params.setdefault("negative_prompt", "")
     params.setdefault("watermark", False)
     params.setdefault("model", os.getenv("DASHSCOPE_EDIT_MODEL", "qwen-image-edit-plus"))
-    params.setdefault("save", True)
+    params.setdefault("save", DEFAULT_SAVE_ARTIFACTS)
     params.setdefault("save_dir", os.getenv("IMAGE_EDIT_SAVE_DIR", "outputs/edits"))
     params.setdefault("overwrite", False)
     return params
@@ -115,7 +117,7 @@ class ImageEditCore:
 
     def __init__(self, api_key: Optional[str] = None):
         # 不在构造期抛错，避免服务启动失败；缺失密钥时在调用处返回错误事件
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = api_key or DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY")
 
     def _blocking_call(self, messages: List[Dict[str, Any]], n: int, watermark: bool, negative_prompt: str, model: str):
         return MultiModalConversation.call(

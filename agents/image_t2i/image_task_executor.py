@@ -10,7 +10,9 @@ from dashscope import ImageSynthesis
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_text_artifact
-from a2a.types import TaskState, TaskStatusUpdateEvent, TaskStatus, TaskArtifactUpdateEvent
+from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
+
+from shared.config import DEFAULT_IMAGE_SIZE, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL
 
 logger = logging.getLogger("image_task_executor")
 
@@ -141,7 +143,7 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
 
     params.setdefault("negative_prompt", "")
     params.setdefault("n", 1)
-    params.setdefault("size", os.getenv("DASHSCOPE_IMAGE_SIZE", "1024*1024"))
+    params.setdefault("size", os.getenv("DASHSCOPE_IMAGE_SIZE", DEFAULT_IMAGE_SIZE))
     params.setdefault("prompt_extend", True)
     params.setdefault("watermark", False)
     params.setdefault("model", os.getenv("DASHSCOPE_MODEL", "wan2.5-t2i-preview"))
@@ -150,10 +152,7 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
     params.setdefault("save_dir", os.getenv("IMAGE_SAVE_DIR", "outputs"))
     params.setdefault("overwrite", False)
 
-    dashscope.base_http_api_url = os.getenv(
-        "DASHSCOPE_BASE_URL",
-        "https://dashscope.aliyuncs.com/api/v1",  # 海外可改为 https://dashscope-intl.aliyuncs.com/api/v1
-    )
+    dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", DASHSCOPE_BASE_URL)
     return params
 
 # -----------------------
@@ -163,7 +162,7 @@ class ImageGenAgent:
     """调用 DashScope 文生图并（可选）下载保存。"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = api_key or DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY")
 
     def _blocking_call(self, call_kwargs: Dict[str, Any]):
         # 提高稳定性：DashScope SDK 内部会处理重试；必要时可加超时控制
