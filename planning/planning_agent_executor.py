@@ -199,6 +199,7 @@ class PlanningAgentExecutor(AgentExecutor):
 
         # 提取用户文本
         user_text = self._extract_user_text(context) or "生成一个可爱的视觉作品"
+        logger.info("[planning] context_id=%s task_id=%s user_text=%s", context.context_id, context.task_id, user_text)
 
         # 调 LLM 生成 plan
         try:
@@ -216,6 +217,12 @@ class PlanningAgentExecutor(AgentExecutor):
 
         # 回显 JSON & Plan
         plan = build_plan_tree(llm_plan)
+        logger.info(
+            "[planning] context_id=%s task_id=%s generated_plan=%s",
+            context.context_id,
+            context.task_id,
+            json.dumps(llm_plan, ensure_ascii=False),
+        )
         await event_queue.enqueue_event(plan)
         await event_queue.enqueue_event(TaskArtifactUpdateEvent(
             artifact=new_text_artifact(name="plan_json", text=json.dumps(llm_plan, ensure_ascii=False, indent=2)),
@@ -225,6 +232,12 @@ class PlanningAgentExecutor(AgentExecutor):
         # 透传到 Router（send_plan_streaming）
         try:
             tracer: PlantTracer = context.call_context.state["tracer"]  # type: ignore
+            logger.info(
+                "[planning] context_id=%s task_id=%s forwarding plan to router=%s",
+                context.context_id,
+                context.task_id,
+                self.ROUTER_AGENT_URL,
+            )
             resolver = A2ACardResolver(httpx_client=self.http, base_url=self.ROUTER_AGENT_URL)
             router_card = await resolver.get_agent_card()
             factory = HolosA2AClientFactory(ClientConfig(httpx_client=self.http), tracer=tracer)
