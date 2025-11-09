@@ -1,6 +1,15 @@
-import json, time, re, uuid, mimetypes, requests, anyio
+"""Utilities shared across task executors."""
+
+import json
+import mimetypes
+import re
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import anyio
+import requests
 
 # ---- artifacts helpers ----
 def status_json(_type: str, state: str, trace_id: str, payload: Dict[str, Any] | None = None) -> str:
@@ -15,19 +24,26 @@ def guess_ext_from_headers(headers: Dict[str, str], fallback: str) -> str:
     return ext or fallback
 
 async def download_file(url: str, target: Path, overwrite: bool, fallback_ext: str) -> Path:
+    """Download ``url`` to ``target`` asynchronously using a worker thread."""
+
     if target.exists() and not overwrite:
         return target
-    def _blocking():
-        r = requests.get(url, timeout=120, stream=True)
-        r.raise_for_status()
-        if target.suffix == "":
-            from .util import guess_ext_from_headers
-            target_with = target.with_suffix(guess_ext_from_headers(r.headers, fallback_ext))
+
+    def _blocking() -> Path:
+        response = requests.get(url, timeout=120, stream=True)
+        response.raise_for_status()
+
+        if target.suffix:
+            target_path = target
         else:
-            target_with = target
-        target_with.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_with, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1024*256):
-                if chunk: f.write(chunk)
-        return target_with
+            ext = guess_ext_from_headers(dict(response.headers), fallback_ext)
+            target_path = target.with_suffix(ext)
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "wb") as fh:
+            for chunk in response.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    fh.write(chunk)
+        return target_path
+
     return await anyio.to_thread.run_sync(_blocking)

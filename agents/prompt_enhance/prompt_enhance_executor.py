@@ -5,9 +5,9 @@ import re
 import json
 import time
 import uuid
-import anyio
-import logging
 from typing import Any, Dict, Optional, Tuple
+
+import anyio
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -23,14 +23,18 @@ from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent, TaskArtifact
 #   api_key="$API_KEY"
 from openai import AzureOpenAI  # pip install openai
 
-logger = logging.getLogger("prompt_enhance_executor")
+from shared.config import (
+    YUNSTORM_API_KEY,
+    YUNSTORM_API_VERSION,
+    YUNSTORM_ENDPOINT,
+    YUNSTORM_MODEL,
+)
+from shared.logger import setup_logging
+
+logger = setup_logging("prompt_enhance_executor")
 
 # ====== 配置（可用环境变量覆盖）======
-YUNSTORM_ENDPOINT = os.getenv("YUNSTORM_ENDPOINT", "https://gpt.yunstorm.com/")
-YUNSTORM_API_KEY = "c1660c7c06c32f4a48c5bac00e5852a5"
-YUNSTORM_API_VERSION = os.getenv("YUNSTORM_API_VERSION", "2025-04-01-preview")
-
-DEFAULT_MODEL = os.getenv("PROMPT_ENHANCE_MODEL", "gpt-4.1")
+DEFAULT_MODEL = os.getenv("PROMPT_ENHANCE_MODEL", YUNSTORM_MODEL)
 DEFAULT_TEMPERATURE = float(os.getenv("PROMPT_ENHANCE_TEMPERATURE", "0.7"))
 
 SYSTEM_PROMPT = """You are a Prompt Enhancer specialized for visual tasks (image editing, text-to-image, text-to-video, image-to-video).

@@ -1,50 +1,55 @@
-# planning/server_planning.py
-# -*- coding: utf-8 -*-
-import os, time, logging, uvicorn
+"""Standalone server for the planning agent."""
+
+from __future__ import annotations
+
+import os
+import time
+
+import uvicorn
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill, AgentProvider
-
+from a2a.types import AgentCapabilities, AgentCard, AgentProvider, AgentSkill
 from holos_sdk import HolosRequestHandler, PlantTracer
-from planning_agent_executor import PlanningAgentExecutor
+
+from shared.config import HOST, PLANNING_PORT, PLANNING_PUBLIC_URL, TRACING_API_BASE
 from shared.logger import setup_logging
-from shared.config import TRACING_API_BASE
+
+from .planning_agent_executor import PlanningAgentExecutor
 
 logger = setup_logging("planning_server")
 
+
 class AccessLog(BaseHTTPMiddleware):
-    async def dispatch(self, req, call_next):
-        t0 = time.perf_counter()
-        resp = await call_next(req)
-        logger.info("[HTTP] %s %s -> %s (%.1f ms)",
-            req.method, req.url.path, resp.status_code, (time.perf_counter()-t0)*1000)
-        return resp
+    async def dispatch(self, req, call_next):  # type: ignore[override]
+        start = time.perf_counter()
+        response = await call_next(req)
+        duration = (time.perf_counter() - start) * 1000
+        logger.info("[HTTP] %s %s -> %s (%.1f ms)", req.method, req.url.path, response.status_code, duration)
+        return response
+
 
 if __name__ == "__main__":
-    PORT = int(os.getenv("PLANNING_PORT", "11111"))
-    PUBLIC_URL = os.getenv("PLANNING_PUBLIC_URL", f"http://localhost:{PORT}/")
-
     skill = AgentSkill(
         id="visual_planning",
         name="Visual Planning (Holos Plan)",
         description="Decompose user intent into a Holos Plan, inject prompt_boost if needed, and forward to Router.",
-        tags=["planning","router","holos","plan"],
+        tags=["planning", "router", "holos", "plan"],
         examples=['"请先生成一张图，再把它变成视频"'],
     )
     agent_card = AgentCard(
-        name=os.getenv("PLANNING_AGENT_NAME","hxz_planning"),
+        name=os.getenv("PLANNING_AGENT_NAME", "vision_planning"),
         description="Planning agent using Yunstorm GPT to create Holos Plan and forward to Router.",
-        url=PUBLIC_URL,
+        url=PLANNING_PUBLIC_URL,
         version="1.0.1",
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[skill],
         supports_authenticated_extended_card=False,
-        provider=AgentProvider(name="haoxiangzhao", organization="001-haoxiangzhao", url="https://example.org/"),
+        provider=AgentProvider(name="vision-agents", organization="vision-agents", url="https://example.org/"),
     )
 
     tracer = PlantTracer(base_url=TRACING_API_BASE, agent_card=agent_card)
@@ -60,6 +65,6 @@ if __name__ == "__main__":
 
     @app.route("/health")
     async def health(_):
-        return JSONResponse({"status":"ok","version":agent_card.version})
+        return JSONResponse({"status": "ok", "version": agent_card.version})
 
-    uvicorn.run(app, host=os.getenv("HOST","0.0.0.0"), port=PORT, log_level="info")
+    uvicorn.run(app, host=HOST, port=PLANNING_PORT, log_level="info")

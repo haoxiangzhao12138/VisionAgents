@@ -19,7 +19,14 @@ from dashscope import VideoSynthesis
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_task, new_text_artifact
-from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent, TaskArtifactUpdateEvent
+from a2a.types import TaskArtifactUpdateEvent, TaskState, TaskStatus, TaskStatusUpdateEvent
+
+from shared.config import (
+    DASHSCOPE_API_KEY,
+    DASHSCOPE_BASE_URL,
+    DEFAULT_SAVE_ARTIFACTS,
+    DEFAULT_VIDEO_DURATION,
+)
 
 logger = logging.getLogger("video_i2v_executor")
 
@@ -145,7 +152,7 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
       - 图片固定从后端目录取第一张（可自行在后端改路径/取图策略）
     """
     # 地域切换（默认北京；新加坡请设：DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/api/v1）
-    dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/api/v1")
+    dashscope.base_http_api_url = os.getenv("DASHSCOPE_BASE_URL", DASHSCOPE_BASE_URL)
 
     text = _extract_text_from_context(context)
     params = _maybe_json(text) or {}
@@ -166,14 +173,14 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
     # 默认参数
     params.setdefault("model", os.getenv("DASHSCOPE_I2V_MODEL", "wan2.5-i2v-preview"))
     params.setdefault("resolution", os.getenv("DASHSCOPE_I2V_RESOLUTION", "480P"))  # 480P/720P/…
-    params.setdefault("duration", int(os.getenv("DASHSCOPE_I2V_DURATION", "8")))    # 秒
+    params.setdefault("duration", int(os.getenv("DASHSCOPE_I2V_DURATION", str(DEFAULT_VIDEO_DURATION))))
     params.setdefault("prompt_extend", True)
     params.setdefault("watermark", False)
     params.setdefault("negative_prompt", "")
     # 可选音频：params.setdefault("audio_url", "https://…/xxx.mp3")
 
     # 保存策略
-    params.setdefault("save", True)
+    params.setdefault("save", DEFAULT_SAVE_ARTIFACTS)
     params.setdefault("save_dir", os.getenv("VIDEO_SAVE_DIR", "outputs/videos"))
     params.setdefault("overwrite", False)
 
@@ -185,7 +192,7 @@ def _extract_user_params(context: RequestContext) -> Dict[str, Any]:
 # -----------------------
 class VideoI2VCore:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = api_key or DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY")
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not set.")
 
