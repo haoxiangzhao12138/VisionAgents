@@ -36,4 +36,16 @@ API keys without modifying the code.
 4. Start the router and any downstream task agents you need.  The router uses the default localhost ports from
    `shared/config.py`, so running each command in a separate terminal is enough for a local development setup.
 
+   Alternatively you can launch every service with a single command:
+
+   ```bash
+   python scripts/start_all.py
+   ```
+
+   Use `--only planning router` to boot a subset of services.
+
+5. Connect Holos' official front-end to the planning endpoint exposed by `planning.server_planning`.  The
+   planning executor attaches Holos tracing metadata to the downstream calls so that the built-in front-end
+   can display task progress and intermediate artifacts without additional glue code.
+
 Health endpoints are available at `http://localhost:<port>/health` for all services.

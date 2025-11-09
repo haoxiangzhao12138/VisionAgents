@@ -98,6 +98,12 @@ class RouterAgentExecutor(AgentExecutor):
         ))
 
         plan = try_convert_to_plan(context.message)
+        logger.info(
+            "[router] context_id=%s task_id=%s received plan root=%s",
+            context.context_id,
+            context.task_id,
+            getattr(plan, "goal", "<unknown>") if plan else "<invalid>",
+        )
         if not plan:
             await event_queue.enqueue_event(TaskArtifactUpdateEvent(
                 artifact=new_text_artifact(name="router_error", text="❌ Expect a Holos Plan from Planning Agent."),
@@ -123,6 +129,12 @@ class RouterAgentExecutor(AgentExecutor):
             return
 
         ordered = _topo(plan)
+        logger.info(
+            "[router] context_id=%s task_id=%s dispatch_order=%s",
+            context.context_id,
+            context.task_id,
+            [getattr(n, "metadata", {}).get("op") for n in ordered],
+        )
 
         id2client: Dict[str, Any] = {}
         for sub in ordered:
@@ -143,6 +155,13 @@ class RouterAgentExecutor(AgentExecutor):
                 id2client[base_url] = (client, card)
                 assignment = Assignment(object_id=sub.id, assignee_id=card.url, assignee_name=card.name)
                 await event_queue.enqueue_event(assignment)
+                logger.info(
+                    "[router] context_id=%s task_id=%s assigned op=%s -> %s",
+                    context.context_id,
+                    context.task_id,
+                    op,
+                    base_url,
+                )
             except Exception as e:
                 await event_queue.enqueue_event(TaskArtifactUpdateEvent(
                     artifact=new_text_artifact(name="router_error", text=f"❌ Resolve agent failed: {e}"),
